@@ -1,0 +1,115 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gatekeeper"
+version = "0.1.0"
+description = "An experimentation & causal inference workbench, validated against a real A/B test"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Amit Bara" }]
+
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+    "pyarrow>=14.0",
+]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.8", "plotly>=5.18"]
+app = ["streamlit>=1.30"]
+ml = ["scikit-learn>=1.4"]          # nuisance models only — see Rules.md §3
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "hypothesis>=6.98",
+    "ruff>=0.3",
+    "mypy>=1.9",
+    "pandas-stubs",
+    "types-pyyaml",
+]
+advanced = ["econml", "dowhy"]      # cross-validation only — never the core path
+bayes = ["pymc", "arviz"]           # only if a model has no closed form
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ----------------------------------------------------------------------------
+# ruff
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "RET",       # return
+    "ARG",       # unused arguments
+    "PD",        # pandas-vet
+    "NPY",       # numpy
+    "RUF",
+]
+ignore = [
+    "E501",      # line length handled by the formatter
+    "N803",      # allow capital-letter stats args (X, Y, Z)
+    "N806",      # allow capital-letter locals (X, Y) matching the maths
+    # N818 wants every exception named *Error. Rules.md §5 fixes this package's
+    # exception names (SanityCheckFailure, SpecViolation, AssumptionViolation,
+    # InsufficientData), and `raise SanityCheckFailure(...)` reads better than
+    # `raise SanityCheckFailureError(...)`. The docs are the contract here.
+    "N818",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG", "PD"]
+
+# ----------------------------------------------------------------------------
+# mypy
+# ----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["statsmodels.*", "scipy.*", "sklearn.*", "plotly.*", "matplotlib.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# ----------------------------------------------------------------------------
+# pytest
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: calibration tests — thousands of simulations (run nightly, not per-push)",
+]
+
+[tool.coverage.run]
+source = ["src/gatekeeper"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]

@@ -140,7 +140,8 @@ Project2/
 │   │
 │   ├── data/
 │   │   ├── ingest.py              # CSV → typed ExperimentData, Parquet cache
-│   │   └── schema.py              # column contract + dtype validation
+│   │   ├── schema.py              # column contract + dtype validation
+│   │   └── synthetic.py           # generators with exactly known ground truth
 │   │
 │   ├── design/
 │   │   ├── power.py               # sample size, power, MDE, duration
@@ -228,25 +229,30 @@ Sketches, not final signatures — the shape is the commitment.
 from dataclasses import dataclass
 from enum import StrEnum
 
+
 class DataSource(StrEnum):
     REAL = "real"
     SYNTHETIC = "synthetic"
-    SEMI_SYNTHETIC = "semi_synthetic"   # real data, injected confounding
+    SEMI_SYNTHETIC = "semi_synthetic"  # real data, injected confounding
+
 
 class Decision(StrEnum):
     SHIP = "ship"
     HOLD = "hold"
     INCONCLUSIVE = "inconclusive"
-    BLOCKED = "blocked"                 # sanity checks failed
+    BLOCKED = "blocked"  # sanity checks failed
+
 
 @dataclass(frozen=True, slots=True)
 class Estimand:
     """What we are trying to estimate, stated before estimating it."""
+
     outcome: str
     treatment: str
-    target: str                          # "ATE" | "ATT" | "LATE" | "CATE"
+    target: str  # "ATE" | "ATT" | "LATE" | "CATE"
     population: str
-    scale: str                           # "absolute" | "relative"
+    scale: str  # "absolute" | "relative"
+
 
 @dataclass(frozen=True, slots=True)
 class EffectEstimate:
@@ -257,8 +263,8 @@ class EffectEstimate:
     se: float | None
     p_value: float | None
     method: str
-    assumptions: tuple[str, ...]         # REQUIRED — no silent estimates
-    data_source: DataSource              # REQUIRED — real vs synthetic
+    assumptions: tuple[str, ...]  # REQUIRED — no silent estimates
+    data_source: DataSource  # REQUIRED — real vs synthetic
     n_per_arm: dict[str, int]
     diagnostics: dict[str, float]
     override_reason: str | None = None
@@ -340,6 +346,13 @@ Statistical code fails silently. Four layers, in increasing cost:
 
 Every RNG-touching function takes an explicit `rng: np.random.Generator` or
 `seed: int`. No module-level `np.random` calls anywhere (Rules R4.2).
+
+**Where ground truth comes from.** `data/synthetic.py` sets marginal outcome
+probabilities *directly per arm*, so the true absolute effect is exactly
+`p_treatment − p_control` rather than a logit-scale coefficient that would need
+marginalising. Tests can therefore assert recovery of an exact number. The whole
+suite runs on synthetic data, so the Kaggle CSV is never needed in CI and is never
+committed.
 
 ---
 
