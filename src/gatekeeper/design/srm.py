@@ -130,7 +130,20 @@ def check_srm(
     if not 0.0 < threshold < 1.0:
         raise ValueError(f"threshold must be in (0, 1), got {threshold}")
 
-    observed = data.n_per_arm
+    # The arm universe must come from what was *intended*, not from what arrived.
+    # An arm that vanished entirely is the most extreme SRM there is, and reading the
+    # universe off the data would hide it: n_per_arm reports only arms present, so a
+    # missing arm would silently reduce this to a one-arm test and raise instead of
+    # reporting a failure. The gate must block, not crash (R1.3).
+    universe = tuple(expected_shares) if expected_shares is not None else data.schema.variants
+    present = data.n_per_arm
+    unknown = set(present) - set(universe)
+    if unknown:
+        raise ValueError(
+            f"data contains arm(s) {sorted(unknown)} absent from the intended allocation "
+            f"{sorted(universe)}; the spec does not describe this experiment"
+        )
+    observed = {arm: present.get(arm, 0) for arm in universe}
     chi2, p_value = srm_test(observed, expected_shares)
 
     total = sum(observed.values())
@@ -143,9 +156,15 @@ def check_srm(
             f"chi2={chi2:.3f}  p={p_value:.4g} (>= {threshold:g})"
         )
     else:
+        vanished = sorted(arm for arm, n in observed.items() if n == 0)
+        prefix = (
+            f"SAMPLE RATIO MISMATCH -- arm(s) {vanished} received ZERO units. "
+            if vanished
+            else "SAMPLE RATIO MISMATCH: "
+        )
         detail = (
-            f"SAMPLE RATIO MISMATCH: observed split is inconsistent with the intended "
-            f"allocation. {obs_desc}  chi2={chi2:.3f}  p={p_value:.4g} (< {threshold:g}). "
+            f"{prefix}Observed split is inconsistent with the intended allocation. "
+            f"{obs_desc}  chi2={chi2:.3f}  p={p_value:.4g} (< {threshold:g}). "
             "Assignment or logging is likely broken; metric results are not "
             "trustworthy until this is explained."
         )

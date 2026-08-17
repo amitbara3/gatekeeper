@@ -80,7 +80,11 @@ def load_cookie_cats(
         )
 
     cache_root = Path(cache_dir) if cache_dir is not None else root / "data" / "processed"
-    cache_path = cache_root / f"{schema.name}.parquet"
+    # The fingerprint is part of the filename so that editing the schema invalidates
+    # the cache. Freshness alone is not enough: the cache holds *validated* data, so a
+    # hit skips revalidation, and a stale entry would return rows checked against the
+    # previous contract.
+    cache_path = cache_root / f"{schema.name}-{schema.fingerprint}.parquet"
     if use_cache and cache_path.exists() and cache_path.stat().st_mtime >= csv_path.stat().st_mtime:
         frame = pd.read_parquet(cache_path)
         return ExperimentData(frame=frame, schema=schema, data_source=data_source)

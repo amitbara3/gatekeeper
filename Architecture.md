@@ -216,7 +216,21 @@ Project2/
 ```
 
 **Structural rule:** `src/gatekeeper/` never imports from `notebooks/` or `app/`.
-Dependencies point inward: `app` → `report` → `frequentist|causal|...` → `types`.
+Dependencies point inward:
+
+```
+app → report → frequentist|causal|sequential|variance|bayesian|hte
+                    ↓
+              checks → spec → types
+                    ↓
+                  data → types
+```
+
+`spec` sits inside the analysis layers but outside `types`, and `checks` is allowed
+to depend on it: `check_outlier_leverage` takes the spec's `OutlierRule` so it can
+say *which* rule was pre-declared rather than just that one existed. That coupling
+buys a materially better error message, and `spec` itself imports only `types`, so
+there is no cycle.
 
 ---
 

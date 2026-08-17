@@ -11,6 +11,7 @@ analyst to remember that ``sum_gamerounds`` is a mediator.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Literal
 
@@ -145,6 +146,25 @@ class DatasetSchema:
     def post_treatment_columns(self) -> frozenset[str]:
         """Columns that must never be used as covariates (R1.7)."""
         return frozenset(c.name for c in self.columns if c.post_treatment)
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable 12-char digest of this contract's content.
+
+        Used in the Parquet cache filename so that **editing the schema invalidates
+        the cache**. Without it, a cache hit is decided purely on file mtimes and a
+        narrowed or retyped schema would silently return data validated against the
+        old contract -- the cache holds validated data, so a hit skips revalidation
+        entirely.
+
+        Uses ``hashlib`` rather than ``hash()`` because the built-in is salted per
+        process for strings, which would make the digest differ between runs.
+        """
+        parts = [self.name, self.unit_col, self.variant_col, self.control]
+        for c in sorted(self.columns, key=lambda s: s.name):
+            allowed = "" if c.allowed_values is None else "|".join(sorted(c.allowed_values))
+            parts.append(f"{c.name}:{c.kind}:{allowed}:{c.post_treatment:d}:{c.unique:d}")
+        return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------------

@@ -103,6 +103,74 @@ class TestCheckSrm:
         assert check.threshold == 0.01
 
 
+class TestVanishedArm:
+    """Regression: a totally missing arm is the most extreme SRM there is.
+
+    ``n_per_arm`` reports only arms *present*, so reading the arm universe off the
+    data reduced this to a one-arm test and raised ``InsufficientData`` -- the gate
+    crashed instead of blocking, giving the worst possible diagnostic for the worst
+    possible experiment failure (R1.3).
+    """
+
+    @staticmethod
+    def _single_arm() -> object:
+        import pandas as pd
+
+        from gatekeeper.data.schema import ExperimentData
+        from gatekeeper.types import DataSource
+
+        df = pd.DataFrame(
+            {
+                "userid": range(1, 201),
+                "version": ["gate_30"] * 200,
+                "sum_gamerounds": [5] * 200,
+                "retention_1": [True] * 200,
+                "retention_7": [False] * 200,
+            }
+        )
+        return ExperimentData.from_frame(df, data_source=DataSource.SYNTHETIC)
+
+    def test_missing_arm_reports_rather_than_raising(self):
+        data = self._single_arm()
+        check = check_srm(data, {"gate_30": 0.5, "gate_40": 0.5})  # type: ignore[arg-type]
+        assert not check.passed
+        assert "ZERO units" in check.detail
+        assert "gate_40" in check.detail
+
+    def test_missing_arm_is_detected_without_explicit_shares(self):
+        """The schema's declared variants supply the universe when shares are omitted."""
+        data = self._single_arm()
+        check = check_srm(data)  # type: ignore[arg-type]
+        assert not check.passed
+        assert "ZERO units" in check.detail
+
+    def test_statistic_is_catastrophic(self):
+        # 200 observed vs 100 expected in one arm, 0 vs 100 in the other:
+        # (200-100)^2/100 + (0-100)^2/100 = 100 + 100 = 200
+        chi2, p = srm_test({"gate_30": 200, "gate_40": 0})
+        assert chi2 == pytest.approx(200.0)
+        assert p < 1e-40
+
+    def test_the_whole_gate_still_produces_a_report(self):
+        """End to end: run_sanity_checks must return, not blow up."""
+        from gatekeeper.checks.integrity import run_sanity_checks
+
+        data = self._single_arm()
+        report = run_sanity_checks(
+            data,  # type: ignore[arg-type]
+            expected_shares={"gate_30": 0.5, "gate_40": 0.5},
+        )
+        assert not report.passed
+        assert len(report.checks) == 4
+        assert not report.get("srm").passed
+        assert not report.get("arm_sizes").passed
+
+    def test_arm_outside_the_intended_allocation_raises(self, data):
+        """A spec that does not describe the data is a configuration error."""
+        with pytest.raises(ValueError, match="absent from the intended allocation"):
+            check_srm(data, {"gate_30": 0.5, "gate_99": 0.5})
+
+
 class TestProperties:
     @settings(max_examples=200, deadline=None)
     @given(

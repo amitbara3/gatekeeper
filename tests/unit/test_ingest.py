@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from gatekeeper.data.ingest import DEFAULT_RAW_PATH, load_cookie_cats, project_root
+from gatekeeper.data.schema import COOKIE_CATS
 from gatekeeper.types import DataSource, SchemaViolation
 
 
@@ -22,6 +23,11 @@ def csv_path(raw_frame: pd.DataFrame, tmp_path):
     p = tmp_path / "cookie_cats.csv"
     raw_frame.to_csv(p, index=False)
     return p
+
+
+def _cache_file(cache_dir, schema=COOKIE_CATS):
+    """The cache path for a schema. Fingerprinted, so editing the schema misses."""
+    return cache_dir / f"{schema.name}-{schema.fingerprint}.parquet"
 
 
 class TestProjectRoot:
@@ -77,7 +83,7 @@ class TestCache:
     def test_cache_is_written_on_first_load(self, csv_path, tmp_path):
         cache = tmp_path / "cache"
         load_cookie_cats(csv_path, cache_dir=cache)
-        assert (cache / "cookie_cats.parquet").exists()
+        assert _cache_file(cache).exists()
 
     def test_second_load_returns_equivalent_data(self, csv_path, tmp_path):
         cache = tmp_path / "cache"
@@ -107,9 +113,8 @@ class TestCache:
         load_cookie_cats(csv_path, cache_dir=cache)
 
         # Backdate the cache so the CSV is unambiguously newer.
-        cache_file = cache / "cookie_cats.parquet"
         old = time.time() - 3600
-        os.utime(cache_file, (old, old))
+        os.utime(_cache_file(cache), (old, old))
 
         pd.read_csv(csv_path).iloc[:2].to_csv(csv_path, index=False)
         assert len(load_cookie_cats(csv_path, cache_dir=cache).frame) == 2
@@ -117,7 +122,66 @@ class TestCache:
     def test_use_cache_false_skips_the_cache_entirely(self, csv_path, tmp_path):
         cache = tmp_path / "cache"
         load_cookie_cats(csv_path, cache_dir=cache, use_cache=False)
-        assert not (cache / "cookie_cats.parquet").exists()
+        assert not _cache_file(cache).exists()
+
+    def test_schema_change_invalidates_the_cache(self, csv_path, tmp_path):
+        """Regression: freshness by mtime alone let a stale cache outlive its contract.
+
+        The cache holds *validated* data, so a hit skips revalidation. Before the
+        schema fingerprint entered the cache key, narrowing the schema returned rows
+        checked against the previous contract -- with columns the new schema does not
+        even declare.
+        """
+        from gatekeeper.data.schema import ColumnSpec, DatasetSchema
+
+        cache = tmp_path / "cache"
+        full = load_cookie_cats(csv_path, cache_dir=cache)
+        assert len(full.frame.columns) == 5
+
+        narrowed = DatasetSchema(
+            name="cookie_cats",  # same name -> same cache basename before the fix
+            unit_col="userid",
+            variant_col="version",
+            control="gate_30",
+            columns=(
+                ColumnSpec("userid", "int"),
+                ColumnSpec("version", "str", allowed_values=frozenset({"gate_30", "gate_40"})),
+            ),
+        )
+        assert narrowed.fingerprint != COOKIE_CATS.fingerprint
+
+        again = load_cookie_cats(csv_path, schema=narrowed, cache_dir=cache)
+        assert list(again.frame.columns) == ["userid", "version"]
+
+    def test_fingerprint_is_stable_across_calls(self):
+        """It must not use salted hash() -- the digest has to survive a restart."""
+        from gatekeeper.data.schema import COOKIE_CATS
+
+        assert COOKIE_CATS.fingerprint == COOKIE_CATS.fingerprint
+        assert len(COOKIE_CATS.fingerprint) == 12
+
+    def test_fingerprint_changes_when_post_treatment_flag_changes(self):
+        """A retyped or reflagged column is a different contract (R1.7)."""
+        from gatekeeper.data.schema import COOKIE_CATS, ColumnSpec, DatasetSchema
+
+        flipped = DatasetSchema(
+            name=COOKIE_CATS.name,
+            unit_col=COOKIE_CATS.unit_col,
+            variant_col=COOKIE_CATS.variant_col,
+            control=COOKIE_CATS.control,
+            columns=tuple(
+                ColumnSpec(
+                    c.name,
+                    c.kind,
+                    c.allowed_values,
+                    post_treatment=False,
+                    unique=c.unique,
+                    description=c.description,
+                )
+                for c in COOKIE_CATS.columns
+            ),
+        )
+        assert flipped.fingerprint != COOKIE_CATS.fingerprint
 
     def test_relative_path_resolves_against_repo_root(self, tmp_path):
         """A relative path is interpreted from the repo root, not the CWD."""
