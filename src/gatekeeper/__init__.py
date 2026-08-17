@@ -15,6 +15,14 @@ The core flow (Architecture §2)::
 
 from __future__ import annotations
 
+from gatekeeper.bayesian.beta_binomial import (
+    JEFFREYS_PRIOR,
+    UNIFORM_PRIOR,
+    BetaPrior,
+    compare_beta_binomial,
+    estimate_beta_binomial,
+    prior_sensitivity,
+)
 from gatekeeper.checks.integrity import run_sanity_checks
 from gatekeeper.checks.outliers import check_outlier_leverage, profile_metric
 from gatekeeper.data.ingest import load_cookie_cats
@@ -71,7 +79,10 @@ __version__ = "0.1.0"
 
 __all__ = [
     "COOKIE_CATS",
+    "JEFFREYS_PRIOR",
+    "UNIFORM_PRIOR",
     "AssumptionViolation",
+    "BetaPrior",
     "DataSource",
     "Decision",
     "EffectEstimate",
@@ -97,11 +108,13 @@ __all__ = [
     "build_readout",
     "check_outlier_leverage",
     "check_srm",
+    "compare_beta_binomial",
     "correct",
     "correct_spec_metrics",
     "cuped_adjust",
     "cuped_theta",
     "duration_days",
+    "estimate_beta_binomial",
     "estimate_bootstrap",
     "estimate_cuped",
     "estimate_two_proportion",
@@ -115,6 +128,7 @@ __all__ = [
     "mde_two_proportion",
     "power_means",
     "power_two_proportion",
+    "prior_sensitivity",
     "profile_metric",
     "ratio_difference",
     "ratio_variance",
