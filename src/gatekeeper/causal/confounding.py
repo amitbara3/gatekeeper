@@ -59,7 +59,9 @@ __all__ = [
     "CONFOUNDED_SCHEMA",
     "CausalScenario",
     "ConfoundingRegime",
+    "covariate_imbalance",
     "make_confounded",
+    "make_heterogeneous",
     "make_randomised",
 ]
 
@@ -299,6 +301,57 @@ def make_confounded(
         n_retained=len(frame),
         n_generated=n,
     )
+
+
+def make_heterogeneous(
+    n: int = 20_000,
+    *,
+    base_effect: float = 1.0,
+    effect_slope: float = 1.5,
+    seed: int = 0,
+    treatment_share: float = 0.5,
+) -> tuple[ExperimentData, np.ndarray]:
+    """A randomised experiment with a **known** conditional treatment effect.
+
+    The effect varies linearly in the observed covariate::
+
+        tau(x) = base_effect + effect_slope * x
+
+    so the true per-unit effect is known exactly and the CATE learners can be scored
+    against it rather than against each other. Assignment stays random, so there is no
+    confounding to untangle -- the only question is whether a learner recovers the
+    *shape* of ``tau(x)``.
+
+    Returns
+    -------
+    tuple[ExperimentData, numpy.ndarray]
+        The data, and the true ``tau(x_i)`` per unit in frame order.
+    """
+    if n < 100:
+        raise InsufficientData(f"need >= 100 units, got {n}")
+    if not 0.0 < treatment_share < 1.0:
+        raise ValueError(f"treatment_share must be in (0, 1), got {treatment_share}")
+
+    rng = np.random.default_rng(seed)
+    x = rng.standard_normal(n)
+    u = rng.standard_normal(n)
+    treated = rng.random(n) < treatment_share
+    tau = base_effect + effect_slope * x
+
+    frame = pd.DataFrame(
+        {
+            "unit_id": np.arange(1, n + 1, dtype=np.int64),
+            "assigned": np.where(treated, "treatment", "control"),
+            "x": x,
+            "u": u,
+            "received": treated.astype(float),
+            "y": 1.0 + 2.0 * x + 0.5 * u + tau * treated + rng.standard_normal(n),
+        }
+    )
+    data = ExperimentData.from_frame(
+        frame, schema=CONFOUNDED_SCHEMA, data_source=DataSource.SYNTHETIC
+    )
+    return data, tau
 
 
 def covariate_imbalance(scenario: CausalScenario, covariate: str = "x") -> float:
