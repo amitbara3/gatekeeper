@@ -89,6 +89,49 @@ class TestProfileKnownAnswers:
         assert "mean" in text
 
 
+class TestBinaryMetricGuard:
+    """A binary metric must be refused, not answered plausibly.
+
+    Pointed at retention_7 this module would compute a tiny leverage, report "no
+    single unit dominates the mean", and pass -- arithmetically true and analytically
+    empty. Confident nonsense for an inappropriate input is exactly what this project
+    exists to catch.
+    """
+
+    def test_profile_rejects_a_boolean_metric(self):
+        data = _frame_with([1, 2, 3, 4], [1, 1, 1, 1])
+        with pytest.raises(ValueError, match="binary metric"):
+            profile_metric(data, "retention_7", "gate_30")
+
+    def test_error_points_at_the_right_tool(self):
+        data = _frame_with([1, 2, 3, 4], [1, 1, 1, 1])
+        with pytest.raises(ValueError, match="two-proportion test"):
+            profile_metric(data, "retention_1", "gate_30")
+
+    def test_magnitude_metric_is_still_allowed(self):
+        data = _frame_with([1, 2, 3, 4], [1, 1, 1, 1])
+        assert profile_metric(data, "sum_gamerounds", "gate_30").n == 4
+
+    def test_column_absent_from_the_schema_is_not_second_guessed(self):
+        """An undeclared column has no declared kind; do not invent a rule for it."""
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "userid": [1, 2, 3, 4],
+                "version": ["gate_30"] * 2 + ["gate_40"] * 2,
+                "sum_gamerounds": [1, 2, 3, 4],
+                "retention_1": [True] * 4,
+                "retention_7": [False] * 4,
+            }
+        )
+        data = ExperimentData.from_frame(df, data_source=DataSource.SYNTHETIC)
+        # 'derived' is not in COOKIE_CATS, so the guard stays out of the way and the
+        # real failure surfaces from the accessor instead.
+        with pytest.raises(KeyError, match="no column"):
+            profile_metric(data, "derived", "gate_30")
+
+
 class TestLeverageCheck:
     def test_wellbehaved_metric_passes(self):
         data = _frame_with([10] * 500, [10] * 500)
@@ -150,6 +193,12 @@ class TestLeverageCheck:
         data = _frame_with([10] * 200, [10] * 200)
         with pytest.raises(ValueError, match="must be positive"):
             check_outlier_leverage(data, "sum_gamerounds", leverage_threshold=0.0)
+
+    def test_binary_metric_is_rejected(self):
+        """Outlier concepts do not apply to a Bernoulli metric."""
+        data = _frame_with([1, 2, 3, 400], [1, 1, 1, 1])
+        with pytest.raises(ValueError, match="binary metric"):
+            check_outlier_leverage(data, "retention_7")
 
     def test_never_mutates_the_data(self):
         """R1.6: this module reports; it does not trim."""

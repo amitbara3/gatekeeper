@@ -26,6 +26,8 @@ __all__ = [
     "ColumnSpec",
     "DatasetSchema",
     "ExperimentData",
+    "validate",
+    "verify_conforms",
 ]
 
 ColumnKind = Literal["int", "float", "bool", "str"]
@@ -305,17 +307,75 @@ def validate(df: pd.DataFrame, schema: DatasetSchema) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+def _dtype_matches(series: pd.Series, kind: ColumnKind) -> bool:
+    """Whether an *already validated* column still carries its expected dtype."""
+    if kind == "bool":
+        return bool(pd.api.types.is_bool_dtype(series))
+    if kind == "int":
+        return bool(pd.api.types.is_integer_dtype(series))
+    if kind == "float":
+        return bool(pd.api.types.is_float_dtype(series))
+    # Strings survive as object from `.astype(str)`, or as a pandas/arrow string
+    # dtype after a Parquet round-trip.
+    return bool(pd.api.types.is_object_dtype(series) or isinstance(series.dtype, pd.StringDtype))
+
+
+def verify_conforms(frame: pd.DataFrame, schema: DatasetSchema) -> None:
+    """Cheaply verify a frame is already validated against ``schema``.
+
+    This is the invariant check, not the parser: it confirms the columns exist and
+    still carry their post-validation dtypes, without re-parsing or coercing.
+
+    It runs on **every** :class:`ExperimentData` construction, which closes two holes
+    at once. Direct construction can no longer smuggle in an unvalidated frame -- so
+    the "always go through :meth:`ExperimentData.from_frame`" convention is enforced
+    rather than merely documented -- and a corrupted or hand-edited Parquet cache is
+    caught on read instead of silently feeding wrong dtypes into an estimator.
+
+    Raises
+    ------
+    SchemaViolation
+        If a declared column is absent or has an unexpected dtype.
+    """
+    missing = [c.name for c in schema.columns if c.name not in frame.columns]
+    if missing:
+        raise SchemaViolation(
+            f"frame is missing column(s) {missing} declared by schema {schema.name!r}. "
+            "Build ExperimentData with ExperimentData.from_frame() or a loader from "
+            "gatekeeper.data.ingest -- direct construction requires an already "
+            "validated frame."
+        )
+    wrong = [
+        f"{c.name} (expected {c.kind}, got {frame[c.name].dtype})"
+        for c in schema.columns
+        if not _dtype_matches(frame[c.name], c.kind)
+    ]
+    if wrong:
+        raise SchemaViolation(
+            f"frame has unexpected dtype(s) for schema {schema.name!r}: {wrong}. "
+            "This frame has not been through validate(); use "
+            "ExperimentData.from_frame(). If it came from the Parquet cache, the "
+            "cache is corrupt -- delete it and reload from the CSV."
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ExperimentData:
     """A validated experiment dataset plus its contract and provenance.
 
-    Construct via :func:`from_frame` (which validates) or the loaders in
-    :mod:`gatekeeper.data.ingest` -- never by assigning to ``frame`` directly.
+    Construct via :meth:`from_frame` (which validates and coerces) or the loaders in
+    :mod:`gatekeeper.data.ingest`. Direct construction is permitted only for a frame
+    that has *already* been validated -- :func:`verify_conforms` runs in
+    ``__post_init__`` and raises otherwise, so the convention is enforced rather than
+    merely documented.
     """
 
     frame: pd.DataFrame
     schema: DatasetSchema
     data_source: DataSource
+
+    def __post_init__(self) -> None:
+        verify_conforms(self.frame, self.schema)
 
     @classmethod
     def from_frame(

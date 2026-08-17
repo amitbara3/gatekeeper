@@ -79,6 +79,34 @@ class OutlierProfile:
         )
 
 
+def _reject_binary_metric(data: ExperimentData, metric: str) -> None:
+    """Refuse to profile a Bernoulli metric.
+
+    Every quantity this module computes -- tail percentiles, top-share, the leverage
+    of the largest observation -- presupposes a metric with a *magnitude*. For a
+    binary metric none of them mean anything: the "largest observation" is 1, the
+    "tail" is just the event rate, and leverage is mechanically ~1/n.
+
+    The failure mode this guards against is not a crash but a plausible-looking
+    number. Pointed at ``retention_7`` the check would compute a tiny leverage,
+    report "no single unit dominates the mean", and pass -- an answer that is
+    arithmetically true and analytically empty. Silently returning a confident number
+    for an inappropriate input is precisely the class of error this project exists to
+    catch, so it raises instead.
+    """
+    try:
+        kind = data.schema.column(metric).kind
+    except KeyError:
+        return  # not a schema-declared column; nothing to assert
+    if kind == "bool":
+        raise ValueError(
+            f"{metric!r} is a binary metric, so outlier profiling does not apply: its "
+            "percentiles, top-share, and leverage are all artefacts of the event rate "
+            "rather than of a tail. Use a two-proportion test for binary metrics, and "
+            "reserve this module for magnitude metrics such as sum_gamerounds."
+        )
+
+
 def profile_metric(data: ExperimentData, metric: str, variant: str) -> OutlierProfile:
     """Summarise the distribution of ``metric`` within one arm.
 
@@ -87,15 +115,19 @@ def profile_metric(data: ExperimentData, metric: str, variant: str) -> OutlierPr
     data
         The experiment.
     metric
-        Column to profile.
+        Column to profile. Must be a magnitude metric, not a binary one.
     variant
         Arm label.
 
     Raises
     ------
+    ValueError
+        If ``metric`` is declared boolean -- outlier concepts do not apply to a
+        Bernoulli metric.
     InsufficientData
         If the arm has fewer than two observations.
     """
+    _reject_binary_metric(data, metric)
     values = data.outcome(metric, variant)
     n = values.size
     if n < 2:
@@ -170,9 +202,15 @@ def check_outlier_leverage(
     -------
     SanityCheck
         **Never modifies the data** -- it reports (R1.6).
+
+    Raises
+    ------
+    ValueError
+        If ``leverage_threshold`` is non-positive, or ``metric`` is binary.
     """
     if leverage_threshold <= 0:
         raise ValueError(f"leverage_threshold must be positive, got {leverage_threshold}")
+    _reject_binary_metric(data, metric)
 
     profiles = [profile_metric(data, metric, v) for v in data.variants]
     worst = max(profiles, key=lambda p: p.max_leverage)

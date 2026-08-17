@@ -170,6 +170,50 @@ class TestExperimentData:
         assert data.variants == ("gate_30",)
 
 
+class TestConstructionIsGuarded:
+    """Direct construction must not smuggle in an unvalidated frame.
+
+    ``verify_conforms`` runs in ``__post_init__``, so the "always use from_frame"
+    convention is enforced rather than merely documented -- and a corrupted Parquet
+    cache is caught on read instead of feeding wrong dtypes to an estimator.
+    """
+
+    def test_raw_unvalidated_frame_is_rejected(self, raw_frame: pd.DataFrame):
+        # Strings where booleans belong: exactly what an unparsed CSV looks like.
+        unparsed = raw_frame.copy()
+        unparsed["retention_1"] = ["True", "False", "True", "True", "False", "False"]
+        with pytest.raises(SchemaViolation, match="unexpected dtype"):
+            ExperimentData(frame=unparsed, schema=COOKIE_CATS, data_source=DataSource.SYNTHETIC)
+
+    def test_error_names_the_right_constructor(self, raw_frame: pd.DataFrame):
+        unparsed = raw_frame.copy()
+        unparsed["sum_gamerounds"] = unparsed["sum_gamerounds"].astype(str)
+        with pytest.raises(SchemaViolation, match="from_frame"):
+            ExperimentData(frame=unparsed, schema=COOKIE_CATS, data_source=DataSource.SYNTHETIC)
+
+    def test_missing_column_is_rejected(self, raw_frame: pd.DataFrame):
+        validated = validate(raw_frame, COOKIE_CATS).drop(columns=["retention_7"])
+        with pytest.raises(SchemaViolation, match="missing column"):
+            ExperimentData(frame=validated, schema=COOKIE_CATS, data_source=DataSource.SYNTHETIC)
+
+    def test_corrupt_cache_message_mentions_the_cache(self, raw_frame: pd.DataFrame):
+        corrupt = validate(raw_frame, COOKIE_CATS)
+        corrupt["retention_7"] = corrupt["retention_7"].astype(int)
+        with pytest.raises(SchemaViolation, match="cache is corrupt"):
+            ExperimentData(frame=corrupt, schema=COOKIE_CATS, data_source=DataSource.SYNTHETIC)
+
+    def test_an_already_validated_frame_is_accepted(self, raw_frame: pd.DataFrame):
+        validated = validate(raw_frame, COOKIE_CATS)
+        data = ExperimentData(frame=validated, schema=COOKIE_CATS, data_source=DataSource.SYNTHETIC)
+        assert len(data.frame) == 6
+
+    def test_from_frame_still_coerces_happily(self, raw_frame: pd.DataFrame):
+        as_str = raw_frame.copy()
+        as_str["retention_1"] = ["True", "False", "TRUE", "false", "0", "1"]
+        data = ExperimentData.from_frame(as_str, data_source=DataSource.SYNTHETIC)
+        assert data.frame["retention_1"].dtype == bool
+
+
 class TestPostTreatmentGuard:
     """R1.7 -- the most tempting mistake available in this repo."""
 
