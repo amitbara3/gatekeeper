@@ -7,7 +7,7 @@ This project's UI is almost entirely **charts and numbers**, so "design" here me
 non-significant result look decisive is a design failure, not a stylistic one.
 
 `src/gatekeeper/viz/theme.py` is the single implementation of everything below. No
-hex value appears anywhere else in the codebase (Rules R4.7).
+hex value appears anywhere else in the codebase (Rules R4.8).
 
 ---
 
