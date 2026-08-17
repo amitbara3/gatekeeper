@@ -272,3 +272,13 @@ Each is mapped to a specific phase in Phases.md.
   number, even if arbitrary, before Phase 3.
 - **O4** — Does the observed split imbalance pass the pre-registered SRM threshold?
   Deliberately left to be *measured* in Phase 1, not assumed here.
+- **O5** — **How should guardrail metrics be judged?** (Raised while building
+  `report/readout.py`.) The spec carries one `practical_threshold`, expressed in the
+  primary metric's units — retention as a proportion. Applying that same `0.01` to
+  `sum_gamerounds`, measured in rounds, is dimensionally meaningless: every effect
+  exceeds 0.01 rounds. Current resolution: the **primary** metric is judged on
+  practical significance; **guardrails** are judged on BH-adjusted statistical
+  significance, and a moved guardrail downgrades a ship to hold pending explanation.
+  The proper fix is per-metric thresholds in the spec, which changes its schema —
+  deferred rather than improvised, since putting thresholds nobody chose into a decision
+  rule would be worse than naming the gap.

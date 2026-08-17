@@ -189,10 +189,31 @@ decision, on real data, using only what Phases 1–2 built.
   what would change the conclusion
 
 **Exit criteria**
-- [ ] One command reproduces the readout from raw CSV
-- [ ] Decision stated against the **practical** threshold, not `p < 0.05`
-- [ ] Sanity gate demonstrably blocks on a deliberately corrupted input
-- [ ] Interpretation written before consulting any public analysis of this dataset
+- [x] `report/readout.py` built: decision stated against the **practical** threshold,
+      not `p < 0.05`. Distinguishes an *informative null* (interval entirely inside
+      ±threshold, so a meaningful effect is ruled out) from an *underpowered* one
+      (interval neither inside nor outside), which is the R1.4 distinction that
+      "not significant" usually erases.
+- [x] Sanity gate demonstrably blocks: a failing report yields `Decision.BLOCKED`, no
+      metric numbers appear in the render at all, and an override is recorded on the
+      readout
+- [ ] **One command reproduces the readout from raw CSV** — blocked on the Kaggle
+      download
+- [ ] **Interpretation written before consulting any public analysis** — blocked on
+      the same
+
+**Status: library layer complete, deliverable blocked on the dataset.** The decision
+logic is built and tested against synthetic estimates; what remains is running it on the
+real numbers.
+
+**New limitation found while building this — PRD open question O5.** The spec carries a
+single `practical_threshold` in the primary metric's units (retention proportion).
+Applying that same `0.01` to `sum_gamerounds`, measured in rounds, would be
+dimensionally meaningless. So guardrails are judged on BH-adjusted *statistical*
+significance and a moved guardrail downgrades a ship to hold pending explanation, while
+only the primary metric is judged on *practical* significance. Inventing per-guardrail
+thresholds would have been worse — it would put numbers nobody chose into a decision
+rule.
 
 **Rule for this phase:** Cookie Cats is a popular Kaggle dataset with many public
 notebooks. **Do not read them until this phase's interpretation is written.**
@@ -217,13 +238,54 @@ early stopping.
 - `notebooks/04_variance_and_sequential.ipynb`
 
 **Exit criteria**
-- [ ] CUPED achieves measured variance reduction matching theoretical `1 − ρ²` on
-      synthetic data with known ρ
-- [ ] CUPED **raises** when handed `sum_gamerounds` as the covariate — with a test
-      asserting the raise
-- [ ] Peeking simulation reproduces the inflated false-positive rate for
-      uncorrected repeated looks, and shows corrected methods holding at α
-- [ ] Everything CUPED/sequential labelled `data_source=SYNTHETIC` (R1.11)
+- [x] CUPED's measured variance reduction matches theory on synthetic data with known
+      ρ. **Note the direction:** CUPED *multiplies* variance by `1 − ρ²`, so the
+      fraction *removed* is `ρ²`. This line originally said the reduction equals
+      `1 − ρ²`, and that phrasing is exactly what produced an inverted
+      `theoretical_reduction` in the code — caught by a test at ρ=0.3 (achieved 0.092
+      vs claimed 0.910). Measured across ρ ∈ {0, 0.3, 0.5, 0.7, 0.9}:
+
+      | ρ | ρ² | achieved | CI width vs plain | effective n |
+      |---|---|---|---|---|
+      | 0.0 | 0.000 | 0.000 | 1.00× | 1.00× |
+      | 0.3 | 0.090 | 0.090 | 0.95× | 1.10× |
+      | 0.5 | 0.250 | 0.251 | 0.87× | 1.33× |
+      | 0.7 | 0.490 | 0.492 | 0.71× | 1.97× |
+      | 0.9 | 0.810 | 0.812 | 0.43× | 5.31× |
+
+- [x] CUPED **raises** `PostTreatmentCovariateError` when handed `sum_gamerounds`,
+      with tests asserting the raise, the message, and that the guard fires *before*
+      any arithmetic
+- [x] Peeking simulation reproduces the inflated false-positive rate and shows the
+      always-valid p-value holding at α (true effect 0, α=0.05, 3,000 sims):
+
+      | looks | naive | always-valid |
+      |---|---|---|
+      | 1 | 0.0523 (1.0×) | 0.0027 |
+      | 2 | 0.0853 (1.7×) | 0.0053 |
+      | 5 | 0.1390 (2.8×) | 0.0090 |
+      | 10 | 0.1870 (3.7×) | 0.0120 |
+      | 20 | 0.2380 (4.8×) | 0.0140 |
+      | 50 | 0.3110 (6.2×) | 0.0173 |
+
+      Reading once at the end gives 0.0523, confirming the harness itself is unbiased
+      rather than the inflation being a simulation artefact.
+- [x] Everything CUPED/sequential is labelled `data_source=SYNTHETIC` (R1.11)
+- [ ] `notebooks/04_variance_and_sequential.ipynb` — deferred with the other notebooks
+
+**Scope change: alpha-spending deferred, always-valid p-values built instead.**
+O'Brien–Fleming and Pocock boundaries need the joint distribution of the sequential
+statistics via recursive numerical integration — tractable, but a substantial piece of
+numerical work whose correctness is hard to verify independently. The mSPRT is
+closed-form, needs no pre-committed number of looks, and its guarantee
+(`P(∃n: pₙ ≤ α) ≤ α`) is directly checkable by simulation, which is how it is validated
+here. This matches the earlier recommendation to cut O'Brien–Fleming as a difficulty
+spike. Alpha-spending remains available as a later addition.
+
+**Honest note on conservatism:** the always-valid rate sits well *below* α (0.3–1.7%
+where α=5%), so it is buying its guarantee with real power. That is the correct
+trade-off for something monitored continuously, and it is stated rather than presented
+as a free lunch.
 
 **Honesty requirement:** Cookie Cats has no pre-period covariate and no timestamps
 (PRD §6). CUPED and sequential accrual are therefore **synthetic-only** here.
