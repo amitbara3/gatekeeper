@@ -223,7 +223,31 @@ Read a neighbouring module first. Consistent naming (`estimate_*` for estimators
 `check_*` for sanity checks, `plot_*` for figures), consistent docstring style
 (numpy format, with an **Assumptions** section on every estimator).
 
-### R4.7 The palette lives in one place — [HARD]
+### R4.7 Calibration failures are bugs until proven otherwise — [HARD]
+
+Every estimator carries a calibration test: under a true null, p-values must be
+uniform, and 95% intervals must cover at 93–97% (Architecture §6).
+
+A failure blocks the phase. **The exception, and it is narrow:** some estimators
+have *documented, expected* finite-sample under-coverage — AIPW and IV are the
+known cases, where nuisance-model error and weak instruments respectively degrade
+coverage at realistic n. That is a property of the method, not a defect in our code.
+
+To invoke the exception, all four must hold:
+
+1. A **citation or derivation** for the expected behaviour — not a hunch.
+2. The test asserts the **degraded** bound explicitly (e.g. `coverage > 0.88`) with
+   the reason in the test's docstring. It never simply widens 93–97% and moves on.
+3. Coverage **improves toward nominal as n grows**, demonstrated by a test at two
+   sample sizes. This is the check that separates a real finite-sample effect from a
+   bug, and it is the one that actually does the work.
+4. The shortfall is recorded in the estimator's `EffectEstimate.assumptions`, so a
+   consumer of the number sees it.
+
+Absent all four, a calibration failure is a bug. "AIPW is known to undercover" is
+not a licence to skip the investigation — it is a hypothesis that item 3 tests.
+
+### R4.8 The palette lives in one place — [HARD]
 
 `viz/theme.py` is the only place colour hexes appear. No inline hex in a plotting
 call. Design.md is the spec; `theme.py` is its implementation.
@@ -288,8 +312,9 @@ call. Design.md is the spec; `theme.py` is its implementation.
 - **Do not add dependencies** to avoid implementing something that is the learning
   goal (§3).
 - **Do not "fix" a failing calibration test by loosening its tolerance.** A
-  coverage of 87% on a nominal 95% CI is a bug in the estimator. Investigate the
-  estimator.
+  coverage of 87% on a nominal 95% CI is a bug until proven otherwise. Investigate
+  the estimator, not the threshold. See R4.7 for the one legitimate exception and
+  the bar it has to clear.
 - **Do not soften an SRM or assumption failure** into a warning to let a pipeline
   finish.
 - **Do not fabricate an interpretation.** If the result is confusing, say it is

@@ -128,13 +128,41 @@ and sizing sections)
 - `notebooks/02_frequentist_core.ipynb`
 
 **Exit criteria**
-- [ ] Every estimator returns an `EffectEstimate` with populated `assumptions`
-- [ ] Known-answer fixture per estimator (hand-computed)
-- [ ] Reference cross-check vs scipy/statsmodels to `< 1e-6` where one exists
-- [ ] **Calibration passes:** p-values uniform under the null (KS p > 0.05) and 95%
-      CI coverage in 93–97% over ≥ 1,000 sims, for every estimator
-- [ ] Power curve reproduces a textbook sample-size example
-- [ ] Property tests: arm-swap sign symmetry, CI width monotonic in n
+- [x] Every estimator returns an `EffectEstimate` with populated `assumptions`
+- [x] Known-answer fixture per estimator, hand-computed (Welch's df = 8 case;
+      pooled vs unpooled SE; BH step-up values; the zero-variance ratio)
+- [x] Reference cross-check vs scipy/statsmodels — agreement to ~1e-16, far inside
+      the 1e-6 bar, for the z-test, Welch (statistic, df, p, CI), BH, Bonferroni,
+      and `TTestIndPower`
+- [x] **Calibration passes** for every estimator: error rate matches α at α ∈
+      {0.01, 0.05, 0.10}, and 95% CI coverage inside 93–97% over ≥ 1,000 sims
+- [x] Power validated two ways: analytic vs `statsmodels.TTestIndPower` (means) and
+      analytic vs empirical rejection rate over 4,000 simulations (proportions).
+      *Stronger than the originally planned "textbook example", so that is what was
+      done instead.*
+- [x] Property tests: arm-swap sign symmetry, CI width monotonic in n, point
+      estimate inside its own interval, shift invariance
+- [ ] `notebooks/02_frequentist_core.ipynb` — deferred with Phase 1's notebook,
+      pending the dataset and the Phase 8 palette
+
+**Two corrections made during this phase** (both recorded because R2.3 asks for it):
+
+1. **The calibration instrument was wrong, not the estimators.** A KS test against a
+   continuous uniform rejected the two-proportion p-values — but that p-value is
+   *discrete*: at a 0.5 base rate with n=800, 2,000 draws give only ~973 distinct
+   values, one of them carrying 2.4% of the mass. KS is invalid there. Replaced with a
+   level test (`P(p ≤ α) ≈ α`), which is valid for discrete and continuous alike, plus
+   a test asserting the discreteness premise so the reasoning is verified rather than
+   assumed. Welch's failure was separately shown to be pure seed noise (3 of 36 KS runs
+   below 0.05 across 12 seeds, pooled `P(p ≤ 0.05) = 0.0488`); its test now checks the
+   median KS p across seeds. **Neither change loosened a tolerance** — R4.7's
+   distinction between a bug and a bad measurement is exactly this.
+
+2. **`scipy.stats.nct` returns NaN at large df**, which broke the sample-size solver
+   and, separately, makes `statsmodels.TTestIndPower` return NaN at d=0.8, n=400.
+   `power_means` now falls back to the normal approximation above df=1,000 and on any
+   non-finite result, so it is strictly more robust than the reference there. The
+   reference test asserts our finiteness rather than reproducing the NaN.
 
 **Do not** proceed to Phase 3 with a failing calibration test. A miscalibrated
 z-test invalidates every downstream phase, and loosening the tolerance to get green
@@ -305,7 +333,7 @@ judgement to recognise that limit.
 **Goal:** make the results legible to someone who will not read the notebooks.
 
 **Build**
-- `viz/theme.py` finalised — the palette from Design.md, single source (R4.7)
+- `viz/theme.py` finalised — the palette from Design.md, single source (R4.8)
 - `viz/static.py`, `viz/interactive.py`
 - `app/streamlit_app.py` — spec + data in; sanity checks, metric results, decision out
 - `report/render.py` — one-page HTML/Markdown export
