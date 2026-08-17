@@ -17,15 +17,60 @@ would need marginalising. Tests can therefore assert recovery of an exact number
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
-from gatekeeper.data.schema import COOKIE_CATS, DatasetSchema, ExperimentData
+from gatekeeper.data.schema import COOKIE_CATS, ColumnSpec, DatasetSchema, ExperimentData
 from gatekeeper.types import DataSource
 
-__all__ = ["SyntheticExperiment", "make_cookie_cats_like", "make_null_experiment"]
+__all__ = [
+    "PRE_PERIOD_SCHEMA",
+    "SyntheticExperiment",
+    "make_cookie_cats_like",
+    "make_null_experiment",
+    "make_pre_period_experiment",
+]
+
+PRE_PERIOD_SCHEMA = DatasetSchema(
+    name="synthetic_pre_period",
+    unit_col="userid",
+    variant_col="version",
+    control="control",
+    columns=(
+        ColumnSpec("userid", "int", unique=True, description="randomisation unit"),
+        ColumnSpec(
+            "version",
+            "str",
+            allowed_values=frozenset({"control", "treatment"}),
+            description="control / treatment",
+        ),
+        ColumnSpec(
+            "pre_rounds",
+            "float",
+            post_treatment=False,
+            description=(
+                "rounds played BEFORE the experiment started; a genuine pre-experiment "
+                "covariate and therefore valid for CUPED"
+            ),
+        ),
+        ColumnSpec(
+            "rounds",
+            "float",
+            post_treatment=True,
+            description="rounds played during the experiment; the outcome",
+        ),
+    ),
+)
+"""A schema with a real pre-experiment covariate.
+
+Cookie Cats has none, which is why CUPED cannot be applied to it (PRD §6). This schema
+exists so CUPED can be demonstrated and calibrated on data where a valid covariate
+genuinely exists, rather than by pressing a post-treatment column into service and
+calling the resulting bias a variance reduction (R1.7).
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +195,90 @@ def make_cookie_cats_like(
         },
         seed=seed,
     )
+
+
+def make_pre_period_experiment(
+    n: int = 20_000,
+    *,
+    seed: int = 0,
+    rho: float = 0.7,
+    effect: float = 2.0,
+    pre_mean: float = 20.0,
+    pre_sd: float = 8.0,
+    outcome_sd: float = 8.0,
+    treatment_share: float = 0.5,
+) -> SyntheticExperiment:
+    """Generate an experiment with a pre-experiment covariate of known correlation.
+
+    The data-generating process is built so ``rho`` really is the population
+    correlation between the covariate and the outcome::
+
+        pre     ~ Normal(pre_mean, pre_sd)
+        outcome = mu + outcome_sd * [ rho * z_pre + sqrt(1 - rho^2) * noise ] + effect*T
+
+    where ``z_pre`` is the standardised covariate. Because the covariate's coefficient
+    is ``rho`` on the standardised scale, the theoretical CUPED variance reduction is
+    exactly ``1 - rho^2`` -- which is what makes this generator useful as a test
+    oracle rather than merely as plausible-looking data.
+
+    The covariate is drawn **independently of treatment**, as a genuine pre-period
+    quantity must be. That independence is what keeps CUPED unbiased.
+
+    Parameters
+    ----------
+    n
+        Total units across both arms.
+    seed
+        RNG seed (R4.2).
+    rho
+        Population correlation between covariate and outcome. Must be in (-1, 1).
+    effect
+        True additive treatment effect on the outcome.
+    pre_mean, pre_sd
+        Covariate distribution.
+    outcome_sd
+        Outcome standard deviation before the treatment shift.
+    treatment_share
+        Fraction assigned to treatment.
+
+    Returns
+    -------
+    SyntheticExperiment
+        ``true_effects["rounds"]`` is ``effect``, exact by construction.
+    """
+    if not -1.0 < rho < 1.0:
+        raise ValueError(f"rho must be in (-1, 1), got {rho}")
+    if pre_sd <= 0 or outcome_sd <= 0:
+        raise ValueError("pre_sd and outcome_sd must be positive")
+    if not 0.0 < treatment_share < 1.0:
+        raise ValueError(f"treatment_share must be in (0, 1), got {treatment_share}")
+    if n < 2:
+        raise ValueError(f"n must be at least 2, got {n}")
+
+    rng = np.random.default_rng(seed)
+    is_treated = rng.random(n) < treatment_share
+
+    z_pre = rng.standard_normal(n)
+    pre = pre_mean + pre_sd * z_pre
+    noise = rng.standard_normal(n)
+    outcome = (
+        pre_mean
+        + outcome_sd * (rho * z_pre + math.sqrt(1.0 - rho**2) * noise)
+        + np.where(is_treated, effect, 0.0)
+    )
+
+    frame = pd.DataFrame(
+        {
+            "userid": np.arange(1, n + 1, dtype=np.int64),
+            "version": np.where(is_treated, "treatment", "control"),
+            "pre_rounds": pre,
+            "rounds": outcome,
+        }
+    )
+    data = ExperimentData.from_frame(
+        frame, schema=PRE_PERIOD_SCHEMA, data_source=DataSource.SYNTHETIC
+    )
+    return SyntheticExperiment(data=data, true_effects={"rounds": effect}, seed=seed)
 
 
 def make_null_experiment(
