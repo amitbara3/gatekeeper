@@ -125,11 +125,15 @@ class TestPowerVsStatsmodels:
         theirs = float(TTestIndPower().power(effect_size=d, nobs1=n, ratio=1.0, alpha=0.05))
 
         if not math.isfinite(theirs):
-            # statsmodels returns NaN here: scipy's nct.cdf(-crit, df, nc) fails at
-            # d=0.8, n=400 (df=798, nc=11.3) and statsmodels propagates it. Our
-            # isfinite guard falls back to the normal approximation instead, so we are
-            # strictly more robust than the reference in this corner. Assert we stay
-            # sane rather than reproduce a NaN.
+            # On some scipy versions nct.cdf(-crit, df, nc) returns NaN (observed at
+            # d=0.8, n=400: df=798, nc=11.3 under scipy 1.17.1) and statsmodels
+            # propagates it. Our isfinite guard falls back to the normal approximation,
+            # so we stay well-defined where the reference does not.
+            #
+            # Whether this branch is reached is a *version* detail, so nothing here
+            # asserts that statsmodels misbehaves -- only that we do not. An earlier
+            # version of this test asserted the NaN and failed in CI, where scipy
+            # returns a finite value.
             assert math.isfinite(ours), "we must never propagate scipy's nct NaN"
             assert ours == pytest.approx(1.0, abs=1e-6), (
                 "NaN from nct arises in the saturated-power regime, so the correct "
@@ -139,22 +143,23 @@ class TestPowerVsStatsmodels:
 
         assert ours == pytest.approx(theirs, rel=1e-7, abs=1e-9)
 
-    def test_we_are_finite_where_statsmodels_returns_nan(self):
-        """Document the divergence deliberately rather than leave it in a branch.
+    def test_power_is_always_finite_across_a_wide_grid(self):
+        """Our own invariant, asserted without reference to any other library.
 
-        This is not us disagreeing with a reference implementation about statistics --
-        it is the reference propagating a library NaN where a well-defined answer
-        exists. Power cannot be NaN; a guard that returns the right number is the
-        correct behaviour, and a test should say so out loud.
+        Power is a probability: it is always defined and always in [0, 1]. Upholding
+        that regardless of how the backend behaves is the entire job of the
+        ``_NCT_DF_LIMIT`` branch and the ``isfinite`` fallback in ``power_means``.
+
+        This replaces a test that asserted statsmodels returns NaN at a specific input.
+        That assertion held locally and failed in CI, because it encoded a property of
+        one scipy build rather than a property of our code. A test should pin down what
+        we guarantee, not what a dependency happens to get wrong this week.
         """
-        theirs = float(TTestIndPower().power(effect_size=0.8, nobs1=400, ratio=1.0, alpha=0.05))
-        assert math.isnan(theirs), (
-            "statsmodels no longer returns NaN here -- if it has been fixed upstream, "
-            "simplify test_matches_ttestindpower back to a plain comparison"
-        )
-        ours = power_means(effect=0.8, sd=1.0, n_control=400, alpha=0.05)
-        assert math.isfinite(ours)
-        assert 0.0 <= ours <= 1.0
+        for d in (0.001, 0.01, 0.1, 0.5, 0.8, 2.0, 10.0):
+            for n in (2, 5, 20, 400, 5_000, 100_000, 10**7):
+                p = power_means(effect=d, sd=1.0, n_control=n, alpha=0.05)
+                assert math.isfinite(p), f"non-finite power at d={d}, n={n}: {p}"
+                assert 0.0 <= p <= 1.0, f"power out of range at d={d}, n={n}: {p}"
 
     def test_matches_with_unequal_group_sizes(self):
         ours = power_means(effect=0.4, sd=1.0, n_control=60, n_treatment=120, alpha=0.05)
