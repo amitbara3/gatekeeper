@@ -1,0 +1,40 @@
+# Install with: pre-commit install
+#
+# nbstripout is the important one: it keeps notebook output out of git diffs, so a
+# review shows the change in logic rather than a wall of re-executed cells and
+# base64 images (Rules §6).
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: no-commit-to-branch
+        # Phase work happens on phase-N-* branches, merged by PR (Rules §6).
+        args: [--branch, main]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.1
+    hooks:
+      - id: nbstripout
+
+  - repo: local
+    hooks:
+      - id: no-committed-data
+        name: refuse to commit dataset files (Rules §6)
+        entry: Data files must never be committed — see data/README.md
+        language: fail
+        files: '^data/(raw|processed)/.*'

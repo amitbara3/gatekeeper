@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Nightly, for the calibration suite only (Architecture §8).
+    - cron: "0 3 * * *"
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+
+  types:
+    name: types (mypy --strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev,viz,ml]"
+      - run: mypy src/
+
+  test:
+    name: test (pytest + coverage gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev,viz,ml]"
+      # The suite runs entirely on synthetic data -- the Kaggle CSV is never needed
+      # in CI, and is never committed (Rules §6).
+      - run: pytest -m "not slow" --cov=gatekeeper --cov-report=term-missing --cov-fail-under=85
+
+  notebooks:
+    name: notebooks execute
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev,viz,ml]" jupyter nbconvert
+      # A notebook that no longer runs is a build failure, not rot. Notebooks that
+      # need the real dataset are expected to skip cleanly when it is absent.
+      - name: Execute all notebooks
+        run: |
+          shopt -s nullglob
+          nbs=(notebooks/*.ipynb)
+          if [ ${#nbs[@]} -eq 0 ]; then
+            echo "No notebooks yet — nothing to execute."
+            exit 0
+          fi
+          for nb in "${nbs[@]}"; do
+            echo "::group::$nb"
+            jupyter nbconvert --to notebook --execute --inplace "$nb"
+            echo "::endgroup::"
+          done
+
+  calibration:
+    name: calibration (nightly)
+    # Minutes, not seconds — nightly rather than per-push (Architecture §8).
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev,viz,ml]"
+      # Exit code 5 means "no tests collected", which is the correct state until
+      # Phase 2 adds the calibration suite. Any real failure still fails the job.
+      - name: Run calibration suite
+        run: |
+          set +e
+          pytest -m slow
+          code=$?
+          if [ $code -eq 5 ]; then
+            echo "No calibration tests yet (Phase 2)."
+            exit 0
+          fi
+          exit $code

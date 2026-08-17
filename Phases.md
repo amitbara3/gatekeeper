@@ -43,10 +43,15 @@ those two.
 - `data/README.md` explaining the manual Kaggle download
 
 **Exit criteria**
-- [ ] Fresh clone → `uv sync` → `pytest` passes
-- [ ] CI green on a trivial PR
-- [ ] `mypy --strict src/` clean
-- [ ] Pre-commit hooks fire on a test commit
+- [x] Fresh clone → install → `pytest` passes *(via `pip install -e ".[dev,viz,ml]"`;
+      `uv` was not available on the dev machine, so the documented pip fallback is
+      the working path — Architecture §1)*
+- [x] `ruff check` + `ruff format --check` clean
+- [x] `mypy --strict src/` clean
+- [ ] CI green on a trivial PR — workflow written and YAML-validated locally, not yet
+      exercised on GitHub
+- [ ] Pre-commit hooks fire on a test commit — config written, `pre-commit install`
+      not yet run
 
 **Note:** doing this first is deliberate. Retrofitting `mypy --strict` onto a
 codebase of statistical helpers is far more painful than starting with it.
@@ -78,13 +83,25 @@ results. **No effect estimates in this phase** — resisting that is the point.
 - The outlier rule, **declared in the spec before Phase 2**
 
 **Exit criteria**
-- [ ] Raw CSV loads with full schema validation; unexpected labels raise
-- [ ] SRM check implemented, tested against a hand-computed 2×2 fixture
-- [ ] `specs/cookie_cats_gate.yaml` committed and locked: primary metric,
+- [x] CSV loads with full schema validation; unexpected variant labels raise
+- [x] SRM check implemented, tested against hand-computed fixtures *and* cross-checked
+      against `scipy.stats.chisquare` to 1e-9
+- [x] `specs/cookie_cats_gate.yaml` committed and locked: primary metric,
       guardrails, α, power, MDE, practical threshold, outlier rule, subgroups
-- [ ] PRD **O2** (primary metric) and **O3** (practical threshold) resolved in writing
-- [ ] PRD **O4** answered with a measured number, not an assumption
-- [ ] Zero effect estimates produced
+- [x] PRD **O2** (primary metric → `retention_7`) and **O3** (practical threshold →
+      1pp) resolved in writing, with reasoning, in the spec file
+- [x] PRD **O1** (post-treatment covariates) closed — enforced in code by
+      `ExperimentData.assert_pre_treatment`
+- [x] Zero effect estimates produced
+- [ ] **PRD O4** (does the real split clear the SRM threshold?) — blocked on the
+      Kaggle download. The check is built and tested; it has not been run on the real
+      data. Deliberately left unanswered rather than assumed.
+- [ ] `notebooks/01_eda_and_sanity.ipynb` — deferred: the EDA notebook needs both the
+      real data and the `viz/theme.py` palette (Phase 8). The library layer it would
+      call is complete.
+
+**Status: substantially complete.** 169 tests, 96% coverage, all three quality gates
+green. The two open items both depend on the dataset download.
 
 **Trap to expect:** the arms are *not* an exact 50/50 split. Whether that
 constitutes an SRM depends entirely on the threshold — which is why the threshold
